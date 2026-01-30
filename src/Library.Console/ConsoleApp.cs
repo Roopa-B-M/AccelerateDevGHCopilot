@@ -1,274 +1,100 @@
-﻿using Library.ApplicationCore;
-using Library.ApplicationCore.Entities;
-using Library.ApplicationCore.Enums;
-using Library.Console;
+﻿global using Console = System.Console;
+
+using System;
+using System.Text.Json;
+using SystemConsole = System.Console;
+
+namespace Library.Console;
 
 public class ConsoleApp
 {
-    ConsoleState _currentState = ConsoleState.PatronSearch;
+    private readonly string _libraryPath = Path.Combine(AppContext.BaseDirectory, "library.json");
+    private readonly string _loansPath = Path.Combine(AppContext.BaseDirectory, "Loans.json");
+    private readonly string _reservationsPath = Path.Combine(AppContext.BaseDirectory, "Reservations.json");
 
-    List<Patron> matchingPatrons = new List<Patron>();
+    private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    Patron? selectedPatronDetails = null;
-    Loan selectedLoanDetails = null!;
+    // Lightweight models for local persistence
+    private record BookLite(Guid Id, string Title, string Author, string ISBN);
+    private record Loan(Guid Id, string ISBN, string PatronId, DateTime LoanedAt, DateTime DueAt, bool Returned);
+    private record Reservation(Guid Id, string ISBN, string PatronId, DateTime ReservedAt);
 
-    IPatronRepository _patronRepository;
-    ILoanRepository _loanRepository;
-    ILoanService _loanService;
-    IPatronService _patronService;
-
-    public ConsoleApp(ILoanService loanService, IPatronService patronService, IPatronRepository patronRepository, ILoanRepository loanRepository)
+    public void PrintAvailability(string isbn)
     {
-        _patronRepository = patronRepository;
-        _loanRepository = loanRepository;
-        _loanService = loanService;
-        _patronService = patronService;
+        var loan = Load<Loan>(_loansPath).FirstOrDefault(l => IsIsbn(l.ISBN, isbn) && !l.Returned);
+        if (loan is not null)
+        {
+            SystemConsole.WriteLine($"On loan. Due date: {loan.DueAt:d}");
+            return;
+        }
+        SystemConsole.WriteLine("Available for loan.");
     }
 
-    public async Task Run()
+    public void LoanBook(string isbn, string patronId, int days)
     {
-        while (true)
+        var book = Load<BookLite>(_libraryPath).FirstOrDefault(b => IsIsbn(b.ISBN, isbn));
+        if (book is null)
         {
-            switch (_currentState)
-            {
-                case ConsoleState.PatronSearch:
-                    _currentState = await PatronSearch();
-                    break;
-                case ConsoleState.PatronSearchResults:
-                    _currentState = await PatronSearchResults();
-                    break;
-                case ConsoleState.PatronDetails:
-                    _currentState = await PatronDetails();
-                    break;
-                case ConsoleState.LoanDetails:
-                    _currentState = await LoanDetails();
-                    break;
-            }
+            SystemConsole.WriteLine("Book not found.");
+            return;
         }
+
+        var loans = Load<Loan>(_loansPath);
+        var active = loans.FirstOrDefault(l => IsIsbn(l.ISBN, isbn) && !l.Returned);
+        if (active is not null)
+        {
+            SystemConsole.WriteLine($"Not available. Current loan due: {active.DueAt:d}");
+            return;
+        }
+
+        var loan = new Loan(Guid.NewGuid(), isbn, patronId, DateTime.UtcNow, DateTime.UtcNow.AddDays(days), false);
+        loans.Add(loan);
+        Save(_loansPath, loans);
+
+        SystemConsole.WriteLine($"Loan created: \"{book.Title}\" ({book.ISBN}) to patron {patronId}. Due: {loan.DueAt:d}");
+        var patronLoans = loans.Where(l => l.PatronId.Equals(patronId, StringComparison.OrdinalIgnoreCase) && !l.Returned).ToList();
+        SystemConsole.WriteLine($"Active loans for {patronId}:");
+        foreach (var pl in patronLoans)
+            SystemConsole.WriteLine($"- {pl.ISBN} due {pl.DueAt:d}");
     }
 
-    async Task<ConsoleState> PatronSearch()
+    public void ReserveBook(string isbn, string patronId)
     {
-        string searchInput = ReadPatronName();
-
-        matchingPatrons = await _patronRepository.SearchPatrons(searchInput);
-
-        // Guard-style clauses for edge cases
-        if (matchingPatrons.Count > 20)
+        var book = Load<BookLite>(_libraryPath).FirstOrDefault(b => IsIsbn(b.ISBN, isbn));
+        if (book is null)
         {
-            Console.WriteLine("More than 20 patrons satisfy the search, please provide more specific input...");
-            return ConsoleState.PatronSearch;
-        }
-        else if (matchingPatrons.Count == 0)
-        {
-            Console.WriteLine("No matching patrons found.");
-            return ConsoleState.PatronSearch;
+            SystemConsole.WriteLine("Book not found.");
+            return;
         }
 
-        Console.WriteLine("Matching Patrons:");
-        PrintPatronsList(matchingPatrons);
-        return ConsoleState.PatronSearchResults;
+        var reservations = Load<Reservation>(_reservationsPath);
+        var existing = reservations.FirstOrDefault(r => IsIsbn(r.ISBN, isbn));
+        if (existing is not null)
+        {
+            SystemConsole.WriteLine("Already reserved.");
+            return;
+        }
+
+        var reservation = new Reservation(Guid.NewGuid(), isbn, patronId, DateTime.UtcNow);
+        reservations.Add(reservation);
+        Save(_reservationsPath, reservations);
+
+        SystemConsole.WriteLine($"Reserved: \"{book.Title}\" ({book.ISBN}) for patron {patronId}.");
     }
 
-    static string ReadPatronName()
-    {
-        string? searchInput = null;
-        while (String.IsNullOrWhiteSpace(searchInput))
-        {
-            Console.Write("Enter a string to search for patrons by name: ");
+    private static bool IsIsbn(string a, string b) =>
+        a.Equals(b, StringComparison.OrdinalIgnoreCase);
 
-            searchInput = Console.ReadLine();
-        }
-        return searchInput;
+    private List<T> Load<T>(string path)
+    {
+        if (!File.Exists(path)) return new List<T>();
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<List<T>>(json, _json) ?? new List<T>();
     }
 
-    static void PrintPatronsList(List<Patron> matchingPatrons)
+    private void Save<T>(string path, List<T> items)
     {
-        int patronNumber = 1;
-        foreach (Patron patron in matchingPatrons)
-        {
-            Console.WriteLine($"{patronNumber}) {patron.Name}");
-            patronNumber++;
-        }
-    }
-
-    async Task<ConsoleState> PatronSearchResults()
-    {
-        CommonActions options = CommonActions.Select | CommonActions.SearchPatrons | CommonActions.Quit;
-        CommonActions action = ReadInputOptions(options, out int selectedPatronNumber);
-        if (action == CommonActions.Select)
-        {
-            if (selectedPatronNumber >= 1 && selectedPatronNumber <= matchingPatrons.Count)
-            {
-                var selectedPatron = matchingPatrons.ElementAt(selectedPatronNumber - 1);
-                selectedPatronDetails = await _patronRepository.GetPatron(selectedPatron.Id)!;
-                return ConsoleState.PatronDetails;
-            }
-            else
-            {
-                Console.WriteLine("Invalid patron number. Please try again.");
-                return ConsoleState.PatronSearchResults;
-            }
-        }
-        else if (action == CommonActions.Quit)
-        {
-            return ConsoleState.Quit;
-        }
-        else if (action == CommonActions.SearchPatrons)
-        {
-            return ConsoleState.PatronSearch;
-        }
-
-        throw new InvalidOperationException("An input option is not handled.");
-    }
-
-    static CommonActions ReadInputOptions(CommonActions options, out int optionNumber)
-    {
-        CommonActions action;
-        optionNumber = 0;
-        do
-        {
-            Console.WriteLine();
-            WriteInputOptions(options);
-            string? userInput = Console.ReadLine();
-
-            action = userInput switch
-            {
-                "q" when options.HasFlag(CommonActions.Quit) => CommonActions.Quit,
-                "s" when options.HasFlag(CommonActions.SearchPatrons) => CommonActions.SearchPatrons,
-                "m" when options.HasFlag(CommonActions.RenewPatronMembership) => CommonActions.RenewPatronMembership,
-                "e" when options.HasFlag(CommonActions.ExtendLoanedBook) => CommonActions.ExtendLoanedBook,
-                "r" when options.HasFlag(CommonActions.ReturnLoanedBook) => CommonActions.ReturnLoanedBook,
-                _ when int.TryParse(userInput, out optionNumber) => CommonActions.Select,
-                _ => CommonActions.Repeat
-            };
-
-            if (action == CommonActions.Repeat)
-            {
-                Console.WriteLine("Invalid input. Please try again.");
-            }
-        } while (action == CommonActions.Repeat);
-        return action;
-    }
-
-    static void WriteInputOptions(CommonActions options)
-    {
-        Console.WriteLine("Input Options:");
-        if (options.HasFlag(CommonActions.ReturnLoanedBook))
-        {
-            Console.WriteLine(" - \"r\" to mark as returned");
-        }
-        if (options.HasFlag(CommonActions.ExtendLoanedBook))
-        {
-            Console.WriteLine(" - \"e\" to extend the book loan");
-        }
-        if (options.HasFlag(CommonActions.RenewPatronMembership))
-        {
-            Console.WriteLine(" - \"m\" to extend patron's membership");
-        }
-        if (options.HasFlag(CommonActions.SearchPatrons))
-        {
-            Console.WriteLine(" - \"s\" for new search");
-        }
-        if (options.HasFlag(CommonActions.Quit))
-        {
-            Console.WriteLine(" - \"q\" to quit");
-        }
-        if (options.HasFlag(CommonActions.Select))
-        {
-            Console.WriteLine("Or type a number to select a list item.");
-        }
-    }
-
-    async Task<ConsoleState> PatronDetails()
-    {
-        Console.WriteLine($"Name: {selectedPatronDetails.Name}");
-        Console.WriteLine($"Membership Expiration: {selectedPatronDetails.MembershipEnd}");
-        Console.WriteLine();
-        Console.WriteLine("Book Loans:");
-        int loanNumber = 1;
-        foreach (Loan loan in selectedPatronDetails.Loans)
-        {
-            Console.WriteLine($"{loanNumber}) {loan.BookItem!.Book!.Title} - Due: {loan.DueDate} - Returned: {(loan.ReturnDate != null).ToString()}");
-            loanNumber++;
-        }
-
-        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.Select | CommonActions.RenewPatronMembership;
-        CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
-        if (action == CommonActions.Select)
-        {
-            if (selectedLoanNumber >= 1 && selectedLoanNumber <= selectedPatronDetails.Loans.Count())
-            {
-                var selectedLoan = selectedPatronDetails.Loans.ElementAt(selectedLoanNumber - 1);
-                selectedLoanDetails = selectedPatronDetails.Loans.Where(l => l.Id == selectedLoan.Id).Single();
-                return ConsoleState.LoanDetails;
-            }
-            else
-            {
-                Console.WriteLine("Invalid book loan number. Please try again.");
-                return ConsoleState.PatronDetails;
-            }
-        }
-        else if (action == CommonActions.Quit)
-        {
-            return ConsoleState.Quit;
-        }
-        else if (action == CommonActions.SearchPatrons)
-        {
-            return ConsoleState.PatronSearch;
-        }
-        else if (action == CommonActions.RenewPatronMembership)
-        {
-            var status = await _patronService.RenewMembership(selectedPatronDetails.Id);
-            Console.WriteLine(EnumHelper.GetDescription(status));
-            // reloading after renewing membership
-            selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
-            return ConsoleState.PatronDetails;
-        }
-
-        throw new InvalidOperationException("An input option is not handled.");
-    }
-
-    async Task<ConsoleState> LoanDetails()
-    {
-        Console.WriteLine($"Book title: {selectedLoanDetails.BookItem!.Book!.Title}");
-        Console.WriteLine($"Book Author: {selectedLoanDetails.BookItem!.Book!.Author!.Name}");
-        Console.WriteLine($"Due date: {selectedLoanDetails.DueDate}");
-        Console.WriteLine($"Returned: {(selectedLoanDetails.ReturnDate != null).ToString()}");
-        Console.WriteLine();
-
-        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.ReturnLoanedBook | CommonActions.ExtendLoanedBook;
-        CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
-
-        if (action == CommonActions.ExtendLoanedBook)
-        {
-            var status = await _loanService.ExtendLoan(selectedLoanDetails.Id);
-            Console.WriteLine(EnumHelper.GetDescription(status));
-
-            // reload loan after extending
-            selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
-            selectedLoanDetails = (await _loanRepository.GetLoan(selectedLoanDetails.Id))!;
-            return ConsoleState.LoanDetails;
-        }
-        else if (action == CommonActions.ReturnLoanedBook)
-        {
-            var status = await _loanService.ReturnLoan(selectedLoanDetails.Id);
-
-            Console.WriteLine(EnumHelper.GetDescription(status));
-            _currentState = ConsoleState.LoanDetails;
-            // reload loan after returning
-            selectedLoanDetails = await _loanRepository.GetLoan(selectedLoanDetails.Id);
-            return ConsoleState.LoanDetails;
-        }
-        else if (action == CommonActions.Quit)
-        {
-            return ConsoleState.Quit;
-        }
-        else if (action == CommonActions.SearchPatrons)
-        {
-            return ConsoleState.PatronSearch;
-        }
-
-        throw new InvalidOperationException("An input option is not handled.");
+        var json = JsonSerializer.Serialize(items, _json);
+        File.WriteAllText(path, json);
     }
 }

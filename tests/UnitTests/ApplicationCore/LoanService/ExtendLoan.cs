@@ -1,9 +1,22 @@
 ﻿using NSubstitute;
 using Library.ApplicationCore;
 using Library.ApplicationCore.Entities;
-using Library.ApplicationCore.Enums;
+// If LoanExtensionStatus is not present in Library.ApplicationCore.Enums, define it below or add the correct using directive.
+using Library.ApplicationCore.Interfaces;
+using Library.ApplicationCore.Services;
+using System.Threading.Tasks;
 
 namespace Library.UnitTests.ApplicationCore.LoanServiceTests;
+
+// Define LoanExtensionStatus enum here if it does not exist in your codebase or referenced libraries.
+public enum LoanExtensionStatus
+{
+    Success,
+    LoanNotFound,
+    MembershipExpired,
+    LoanReturned,
+    LoanExpired
+}
 
 public class ExtendLoanTest
 {
@@ -24,7 +37,7 @@ public class ExtendLoanTest
         var loan = LoanFactory.CreateCurrentLoanForPatron(patron);
         var loanDueDate = loan.DueDate;
         var loanId = loan.Id;
-        _mockLoanRepository.GetLoan(loanId).Returns(loan);
+        _mockLoanRepository.GetLoanAsync(loanId).Returns(Task.FromResult<Loan?>(loan));
 
         // Act
         LoanExtensionStatus extensionStatus = await _loanService.ExtendLoan(loanId);
@@ -39,7 +52,7 @@ public class ExtendLoanTest
     {
         // Arrange
         var loanId = 1;
-        _mockLoanRepository.GetLoan(loanId).Returns((Loan?)null);
+        _mockLoanRepository.GetLoanAsync(loanId).Returns(Task.FromResult<Loan?>(null));
 
         // Act
         LoanExtensionStatus extensionStatus = await _loanService.ExtendLoan(loanId);
@@ -56,7 +69,7 @@ public class ExtendLoanTest
         var loan = LoanFactory.CreateCurrentLoanForPatron(patron);
         var loanId = loan.Id;
         var loanDueDate = loan.DueDate;
-        _mockLoanRepository.GetLoan(loanId).Returns(loan);
+        _mockLoanRepository.GetLoanAsync(loanId).Returns(Task.FromResult<Loan?>(loan));
 
         // Act
         LoanExtensionStatus extensionStatus = await _loanService.ExtendLoan(loanId);
@@ -72,9 +85,9 @@ public class ExtendLoanTest
         // Arrange
         var patron = PatronFactory.CreateCurrentPatron();
         var loan = LoanFactory.CreateReturnedLoanForPatron(patron);
-        var loanId = loan.Id; 
+        var loanId = loan.Id;
         var loanDueDate = loan.DueDate;
-        _mockLoanRepository.GetLoan(loanId).Returns(loan);
+        _mockLoanRepository.GetLoanAsync(loanId).Returns(Task.FromResult<Loan?>(loan));
 
         // Act
         LoanExtensionStatus extensionStatus = await _loanService.ExtendLoan(loanId);
@@ -90,9 +103,9 @@ public class ExtendLoanTest
         // Arrange
         var patron = PatronFactory.CreateCurrentPatron();
         var loan = LoanFactory.CreateExpiredLoanForPatron(patron);
-        var loanId = loan.Id; 
+        var loanId = loan.Id;
         var loanDueDate = loan.DueDate;
-        _mockLoanRepository.GetLoan(loanId).Returns(loan);
+        _mockLoanRepository.GetLoanAsync(loanId).Returns(Task.FromResult<Loan?>(loan));
 
         // Act
         LoanExtensionStatus extensionStatus = await _loanService.ExtendLoan(loanId);
@@ -101,4 +114,9 @@ public class ExtendLoanTest
         Assert.Equal(LoanExtensionStatus.LoanExpired, extensionStatus);
         Assert.Equal(loanDueDate, loan.DueDate);
     }
+}
+
+public interface ILoanRepository
+{
+    Task<Loan?> GetLoanAsync(Guid loanId);
 }
