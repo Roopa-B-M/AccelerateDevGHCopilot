@@ -2,6 +2,9 @@
 using Library.ApplicationCore;
 using Library.ApplicationCore.Entities;
 using Library.ApplicationCore.Enums;
+using Library.ApplicationCore.Interfaces;
+using Library.ApplicationCore.Services;
+using MyApp.Models; // Replace with actual namespace
 
 namespace Library.UnitTests.ApplicationCore.PatronServiceTests;
 
@@ -23,7 +26,7 @@ public class RenewMembershipTest
         var patron = PatronFactory.CreateCurrentPatron();
         var membershipEnd = patron.MembershipEnd;
         var patronId = patron.Id;
-        _mockPatronRepository.GetPatron(patronId).Returns(patron);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns(patron);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -62,7 +65,7 @@ public class RenewMembershipTest
         patron.Loans = new List<Loan> {
             LoanFactory.CreateReturnedLoanForPatron(patron)
         };
-        _mockPatronRepository.GetPatron(patronId).Returns(patron);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns(patron);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -92,7 +95,7 @@ public class RenewMembershipTest
         patron.Loans = new List<Loan> {
             LoanFactory.CreateCurrentLoanForPatron(patron)
         };
-        _mockPatronRepository.GetPatron(patronId).Returns(patron);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns(patron);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -107,7 +110,7 @@ public class RenewMembershipTest
     {
         // Arrange
         var patronId = 42;
-        _mockPatronRepository.GetPatron(patronId).Returns((Patron?)null);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns((Patron?)null);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -122,7 +125,7 @@ public class RenewMembershipTest
         // Arrange
         var patron = PatronFactory.CreateTooEarlyToRenewPatron();
         var patronId = patron.Id;
-        _mockPatronRepository.GetPatron(patronId).Returns(patron);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns(patron);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -140,7 +143,7 @@ public class RenewMembershipTest
         patron.Loans = new List<Loan> {
             LoanFactory.CreateExpiredLoanForPatron(patron)
         };
-        _mockPatronRepository.GetPatron(patronId).Returns(patron);
+        _mockPatronRepository.GetByIdAsync(patronId).Returns(patron);
 
         // Act
         MembershipRenewalStatus renewalStatus = await _patronService.RenewMembership(patronId);
@@ -148,4 +151,36 @@ public class RenewMembershipTest
         // Assert
         Assert.Equal(MembershipRenewalStatus.LoanNotReturned, renewalStatus);
     }
+
+    public async Task<MembershipRenewalStatus> RenewMembership(int patronId)
+    {
+        var patron = await _patronRepository.GetByIdAsync(patronId);
+        if (patron == null)
+            return MembershipRenewalStatus.PatronNotFound;
+
+        // Example: Only allow renewal if membership ends within 30 days or is expired
+        if (patron.MembershipEnd > DateTime.Now.AddDays(30))
+            return MembershipRenewalStatus.TooEarlyToRenew;
+
+        // Check for overdue loans
+        if (patron.Loans != null && patron.Loans.Any(l => l.IsOverdue))
+            return MembershipRenewalStatus.LoanNotReturned;
+
+        // Renew membership
+        patron.MembershipEnd = patron.MembershipEnd.AddYears(1);
+        await _patronRepository.UpdateAsync(patron);
+
+        return MembershipRenewalStatus.Success;
+    }
+}
+
+public enum MembershipRenewalStatus
+{
+    Pending,
+    Approved,
+    Rejected,
+    Success,
+    PatronNotFound,
+    TooEarlyToRenew,
+    LoanNotReturned
 }

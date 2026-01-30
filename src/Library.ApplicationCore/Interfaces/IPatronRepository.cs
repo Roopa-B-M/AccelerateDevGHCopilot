@@ -1,10 +1,11 @@
-using Library.ApplicationCore.Entities;
+namespace Library.ApplicationCore.Interfaces
+{
+    using System;
+    using Library.ApplicationCore.Entities;
 
-namespace Library.ApplicationCore;
-
-public interface IPatronRepository {
-    Task<Patron?> GetPatron(int patronId);
-    Task<List<Patron>> SearchPatrons(string searchInput);
-    Task UpdatePatron(Patron patron);
+    public interface IPatronRepository
+    {
+        Patron? GetById(Guid id);
+        void Update(Patron patron);
+    }
 }
-

@@ -1,70 +1,91 @@
-using Library.ApplicationCore;
-using Library.ApplicationCore.Entities;
-using Library.ApplicationCore.Enums;
-
-public class LoanService : ILoanService
+namespace Library.ApplicationCore.Services
 {
-    private ILoanRepository _loanRepository;
+    using System;
+    using Library.ApplicationCore.Entities;
+    using Library.ApplicationCore.Interfaces;
+    using Library.ApplicationCore.Enums;
 
-    public LoanService(ILoanRepository loanRepository)
+    public enum LoanReturnStatus
     {
-        _loanRepository = loanRepository;
+        Success,
+        LoanNotFound,
+        AlreadyReturned
     }
 
-    public async Task<LoanReturnStatus> ReturnLoan(int loanId)
+    public class LoanService
     {
-        Loan? loan = await _loanRepository.GetLoan(loanId);
-        if (loan == null)
+        public const int ExtendByDays = 14;
+        private readonly ILoanRepository _loans;
+
+        public LoanService(ILoanRepository loans)
         {
-            return LoanReturnStatus.LoanNotFound;
+            _loans = loans;
         }
 
-        // check if already returned
-        if (loan.ReturnDate != null)
+        public Loan ReturnLoan(Loan loan)
         {
-            return LoanReturnStatus.AlreadyReturned;
+            loan.Returned = true;
+            loan.ReturnedAt = DateTime.UtcNow;
+            _loans.Update(loan);
+            return loan;
         }
 
-        loan.ReturnDate = DateTime.Now;
-        try
+        public Loan ExtendLoan(Loan loan, int extraDays)
         {
-            await _loanRepository.UpdateLoan(loan);
+            if (extraDays <= 0) return loan;
+            loan.DueDate = ((DateTime)loan.DueDate).AddDays(extraDays);
+            _loans.Update(loan);
+            return loan;
+        }
+
+        public async Task<LoanReturnStatus> ReturnLoan(Guid loanId)
+        {
+            var loan = await _loans.GetLoanAsync(loanId);
+            
+            if (loan == null)
+                return LoanReturnStatus.LoanNotFound;
+            
+            if (loan.Returned)
+                return LoanReturnStatus.AlreadyReturned;
+            
+            // Set the return status and timestamp
+            loan.Returned = true;
+            loan.ReturnedAt = DateTime.UtcNow;
+            _loans.Update(loan);
+            
             return LoanReturnStatus.Success;
         }
-        catch (Exception e)
+
+        public async Task<LoanExtensionStatus> ExtendLoan(Guid loanId)
         {
-            return LoanReturnStatus.Error;
-        }
-    }
+            var loan = await _loans.GetLoanAsync(loanId);
+            if (loan == null)
+                return LoanExtensionStatus.LoanNotFound;
 
-    public const int ExtendByDays = 14;
+            if (loan.Returned || loan.ReturnedAt != null)
+                return LoanExtensionStatus.LoanReturned;
 
-    public async Task<LoanExtensionStatus> ExtendLoan(int loanId)
-    {
-        var loan = await _loanRepository.GetLoan(loanId);
+            if (((DateTime)loan.DueDate) < DateTime.UtcNow)
+                return LoanExtensionStatus.LoanExpired;
 
-        if (loan == null)
-            return LoanExtensionStatus.LoanNotFound;
+            if (loan.Patron?.MembershipEnd < DateTime.UtcNow)
+                return LoanExtensionStatus.MembershipExpired;
 
-        // Check if patron's membership is expired
-        if (loan.Patron!.MembershipEnd < DateTime.Now)
-            return LoanExtensionStatus.MembershipExpired;
-
-        if (loan.ReturnDate != null)
-            return LoanExtensionStatus.LoanReturned;
-
-        if (loan.DueDate < DateTime.Now)
-            return LoanExtensionStatus.LoanExpired;
-
-        loan.DueDate = loan.DueDate.AddDays(ExtendByDays);
-        try
-        {
-            await _loanRepository.UpdateLoan(loan);
+            loan.DueDate = loan.DueDate.AddDays(ExtendByDays);
+            _loans.Update(loan);
             return LoanExtensionStatus.Success;
         }
-        catch (Exception e)
-        {
-            return LoanExtensionStatus.Error;
-        }
+    }
+}
+
+namespace Library.ApplicationCore.Enums
+{
+    public enum LoanExtensionStatus
+    {
+        Success,
+        LoanNotFound,
+        MembershipExpired,
+        LoanReturned,
+        LoanExpired
     }
 }

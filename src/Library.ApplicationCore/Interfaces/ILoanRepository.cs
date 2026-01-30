@@ -1,8 +1,16 @@
-using Library.ApplicationCore.Entities;
+namespace Library.ApplicationCore.Interfaces
+{
+    using System;
+    using System.Collections.Generic;
+    using Library.ApplicationCore.Entities;
 
-namespace Library.ApplicationCore;
-
-public interface ILoanRepository {
-    Task<Loan?> GetLoan(int loanId);
-    Task UpdateLoan(Loan loan);
+    public interface ILoanRepository
+    {
+        Loan? GetById(Guid id);
+        IEnumerable<Loan> GetByPatronId(Guid patronId);
+        Loan? GetActiveLoanByIsbn(string isbn);
+        void Add(Loan loan);
+        Task<Loan?> GetLoanAsync(Guid loanId);
+        void Update(Loan loan);
+    }
 }

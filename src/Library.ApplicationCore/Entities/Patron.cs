@@ -1,11 +1,16 @@
-﻿namespace Library.ApplicationCore.Entities;
-
-public class Patron
+namespace Library.ApplicationCore.Entities
 {
-    public int Id { get; set; }
-    public required string Name { get; set; }
-    public DateTime MembershipEnd { get; set; }
-    public DateTime MembershipStart { get; set; }
-    public string? ImageName { get; set; }
-    public ICollection<Loan> Loans { get; set; } = new HashSet<Loan>();
+    using System;
+    using System.Collections.Generic;
+    using Library.ApplicationCore.Enums;
+
+    public class Patron
+    {
+        public Guid Id { get; set; }
+        public string? Name { get; set; }
+        public DateTime MembershipExpiresOn { get; set; }
+        public DateTime? MembershipEnd { get; set; }
+        public MembershipStatus Status { get; set; } = MembershipStatus.Active;
+        public ICollection<Loan> Loans { get; set; } = new List<Loan>();
+    }
 }
